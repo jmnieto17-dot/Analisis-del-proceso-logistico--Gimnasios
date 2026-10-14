@@ -1,0 +1,344 @@
+// ----------------------------------------------------------------
+// Definición de las "tablas" (una hoja por tabla) y sus columnas
+// ----------------------------------------------------------------
+const TABLAS = {
+  Roles_Tipos_Usuario: ['id_rol', 'nombre_rol', 'descripcion'],
+  Membresias_Precios: ['id_membresia', 'nombre_plan', 'precio', 'duracion_dias', 'horario_permitido'],
+  Localizacion_Zonas: ['id_zona', 'nombre_zona', 'capacidad_maxima', 'ubicacion_fisica'],
+  Usuarios: [
+    'id_usuario', 'id_rol', 'id_membresia', 'Nombres', 'Apellidos',
+    'Documento_Identidad', 'Telefono', 'Email', 'fecha_registro', 'estado_activo', 'descrip_cion', 'obj_tivo', 'Franja_Horaria',
+  ],
+  Maquinas_Equipos: [
+    'id_maquina', 'id_zona', 'nombre_equipo', 'marca_modelo',
+    'fecha_adquisicion', 'estado_operativo',
+  ],
+  Mantenimiento: [
+    'id_mantenimiento', 'id_maquina', 'id_usuario_reporta', 'fecha_revision',
+    'tipo_mantenimiento', 'costo_reparacion', 'descripcion_falla',
+  ],
+};
+
+// Mismo orden que en el esquema SQL, por claridad (en Sheets no hay
+// llaves foráneas reales, así que el orden no es obligatorio aquí)
+const ORDEN_CREACION = [
+  'Roles_Tipos_Usuario',
+  'Membresias_Precios',
+  'Localizacion_Zonas',
+  'Usuarios',
+  'Maquinas_Equipos',
+  'Mantenimiento',
+];
+
+const VALORES_ESTADO_OPERATIVO = ['Excelente', 'Bueno', 'Regular', 'Fuera de servicio'];
+const VALORES_TIPO_MANTENIMIENTO = ['Preventivo', 'Correctivo'];
+
+const FILAS_RESERVADAS = 999; // hasta dónde llegan las validaciones
+
+// ----------------------------------------------------------------
+// Función principal
+// ----------------------------------------------------------------
+function crearBaseDeDatosGimnasio() {
+  const libro = SpreadsheetApp.getActiveSpreadsheet();
+
+  ORDEN_CREACION.forEach(nombreTabla => {
+    crearHojaSiNoExiste_(libro, nombreTabla, TABLAS[nombreTabla]);
+    Logger.log(`Hoja '${nombreTabla}' lista.`);
+  });
+
+  aplicarValidaciones_(libro);
+  insertarDatosDeCatalogo_(libro);
+
+  const hojaDefault = libro.getSheetByName('Hoja 1') || libro.getSheetByName('Sheet1');
+  if (hojaDefault && hojaDefault.getLastRow() === 0) {
+    libro.deleteSheet(hojaDefault);
+  }
+
+  Logger.log('Base de datos del gimnasio creada en Google Sheets.');
+}
+
+// ----------------------------------------------------------------
+// Crea una hoja con encabezados si no existe todavía
+// ----------------------------------------------------------------
+function crearHojaSiNoExiste_(libro, nombre, encabezados) {
+  let hoja = libro.getSheetByName(nombre);
+  if (!hoja) {
+    hoja = libro.insertSheet(nombre);
+  }
+  hoja.getRange(1, 1, 1, encabezados.length)
+      .setValues([encabezados])
+      .setFontWeight('bold')
+      .setBackground('#d9d9d9');
+  hoja.setFrozenRows(1);
+  hoja.autoResizeColumns(1, encabezados.length);
+  return hoja;
+}
+
+// ----------------------------------------------------------------
+// Validaciones (equivalentes a ENUM / BOOLEAN / FK del esquema SQL)
+// ----------------------------------------------------------------
+function aplicarValidaciones_(libro) {
+  aplicarListaDesplegable_(libro, 'Maquinas_Equipos', 'estado_operativo', VALORES_ESTADO_OPERATIVO);
+  aplicarListaDesplegable_(libro, 'Mantenimiento', 'tipo_mantenimiento', VALORES_TIPO_MANTENIMIENTO);
+  aplicarCheckbox_(libro, 'Usuarios', 'estado_activo');
+
+  // Estas listas apuntan a los IDs ya existentes en la hoja "padre",
+  // simulando el comportamiento de una llave foránea
+  aplicarListaDesdeColumna_(libro, 'Usuarios', 'id_rol', 'Roles_Tipos_Usuario', 'id_rol');
+  aplicarListaDesdeColumna_(libro, 'Usuarios', 'id_membresia', 'Membresias_Precios', 'id_membresia');
+  aplicarListaDesdeColumna_(libro, 'Maquinas_Equipos', 'id_zona', 'Localizacion_Zonas', 'id_zona');
+  aplicarListaDesdeColumna_(libro, 'Mantenimiento', 'id_maquina', 'Maquinas_Equipos', 'id_maquina');
+  aplicarListaDesdeColumna_(libro, 'Mantenimiento', 'id_usuario_reporta', 'Usuarios', 'id_usuario');
+}
+
+function indiceColumna_(nombreTabla, nombreColumna) {
+  return TABLAS[nombreTabla].indexOf(nombreColumna) + 1; // base 1
+}
+
+function aplicarListaDesplegable_(libro, nombreTabla, nombreColumna, valores) {
+  const hoja = libro.getSheetByName(nombreTabla);
+  const col = indiceColumna_(nombreTabla, nombreColumna);
+  const regla = SpreadsheetApp.newDataValidation()
+      .requireValueInList(valores, true)
+      .setAllowInvalid(false)
+      .build();
+  hoja.getRange(2, col, FILAS_RESERVADAS, 1).setDataValidation(regla);
+}
+
+function aplicarCheckbox_(libro, nombreTabla, nombreColumna) {
+  const hoja = libro.getSheetByName(nombreTabla);
+  const col = indiceColumna_(nombreTabla, nombreColumna);
+  hoja.getRange(2, col, FILAS_RESERVADAS, 1).insertCheckboxes();
+}
+
+// Lista desplegable que apunta a los IDs existentes en otra "tabla"
+function aplicarListaDesdeColumna_(libro, tablaOrigen, columnaOrigen, tablaDestino, columnaDestino) {
+  const hojaOrigen = libro.getSheetByName(tablaOrigen);
+  const hojaDestino = libro.getSheetByName(tablaDestino);
+  const colOrigen = indiceColumna_(tablaOrigen, columnaOrigen);
+  const colDestino = indiceColumna_(tablaDestino, columnaDestino);
+
+  const rangoDestino = hojaDestino.getRange(2, colDestino, FILAS_RESERVADAS, 1);
+  const regla = SpreadsheetApp.newDataValidation()
+      .requireValueInRange(rangoDestino, true)
+      .setAllowInvalid(false)
+      .build();
+  hojaOrigen.getRange(2, colOrigen, FILAS_RESERVADAS, 1).setDataValidation(regla);
+}
+
+// ----------------------------------------------------------------
+// Datos base de catálogo (roles y planes de membresía)
+// ----------------------------------------------------------------
+function insertarDatosDeCatalogo_(libro) {
+  const hojaRoles = libro.getSheetByName('Roles_Tipos_Usuario');
+  if (hojaRoles.getLastRow() === 1) {
+    hojaRoles.getRange(2, 1, 5, 3).setValues([
+      [1, 'Administrador', 'Acceso total al sistema y a la configuración'],
+      [2, 'Entrenador', 'Gestiona rutinas y atiende clientes'],
+      [3, 'Cliente', 'Usuario con membresía activa'],
+      [4, 'Invitado', 'Acceso temporal, sin membresía asociada'],
+      [5, 'Mantenimiento', 'Encargado de revisar y reparar equipos'],
+    ]);
+  }
+
+  const hojaMembresias = libro.getSheetByName('Membresias_Precios');
+  if (hojaMembresias.getLastRow() === 1) {
+    hojaMembresias.getRange(2, 1, 4, 5).setValues([
+      [1, 'Pase Diario', 15000, 1, '24/7'],
+      [2, 'Mensual Básico', 90000, 30, 'Solo mañanas'],
+      [3, 'Mensual VIP', 150000, 30, '24/7'],
+      [4, 'Trimestral Básico', 240000, 90, 'Solo mañanas'],
+    ]);
+  }
+}
+
+// ----------------------------------------------------------------
+// Helper para insertar una fila nueva en la primera posición disponible
+// de la Columna A (ID autoincremental).
+// ----------------------------------------------------------------
+function insertarFila(nombreTabla, valores) {
+  const libro = SpreadsheetApp.getActiveSpreadsheet();
+  const hoja = libro.getSheetByName(nombreTabla);
+
+  if (!hoja) {
+    throw new Error(`La hoja '${nombreTabla}' no existe en este libro de cálculo.`);
+  }
+
+  // 1. Obtener todos los valores de la Columna A (ID)
+  const datosColumnaA = hoja.getRange('A:A').getValues();
+  
+  let filaDestino = 2; // La fila 1 es de encabezados, empezamos en la 2
+  let maxId = 0;
+
+  // 2. Recorrer la columna A para encontrar el mayor ID y la primera fila vacía
+  for (let i = 1; i < datosColumnaA.length; i++) {
+    const val = datosColumnaA[i][0];
+    if (val !== '' && val !== null && val !== undefined) {
+      const num = Number(val);
+      if (!isNaN(num) && num > maxId) {
+        maxId = num;
+      }
+      filaDestino = i + 2; // Siguiente fila libre
+    } else {
+      break; // Encontramos la primera celda vacía en los IDs
+    }
+  }
+
+  // 3. Asignar el siguiente ID autoincremental
+  const siguienteId = maxId + 1;
+  valores[0] = siguienteId;
+
+  // 4. Escribir los datos en la fila exactas (reemplaza a appendRow)
+  hoja.getRange(filaDestino, 1, 1, valores.length).setValues([valores]);
+
+  return siguienteId;
+}
+function alEnviarFormulario(e) {
+  // 1. Guard de seguridad
+  if (typeof e === 'undefined' || !e) {
+    Logger.log('⚠️ ATENCIÓN: Esta función solo se ejecuta automáticamente cuando alguien responde el Google Form.');
+    return;
+  }
+
+  // 2. Extraer respuestas del formulario con los nuevos índices
+  const respuestas = e.values || [];
+
+  const nombres        = respuestas[1] || 'Sin nombre';
+  const apellidos      = respuestas[2] || 'Sin apellido';
+  const documento      = respuestas[3] || 'Sin documento';
+  const telefono       = respuestas[4] || 'Sin teléfono';
+  const email          = respuestas[5] || 'Sin email';
+  const obj_tivo       = respuestas[6] || 'Sin objetivo';
+  const Franja_Horaria = respuestas[7] || 'Sin franja';
+  const descrip_cion   = respuestas[8] || 'Registrado desde Google Form';
+
+  // 3. Conectarnos a la hoja Usuarios para buscar si el documento ya existe
+  const libro = SpreadsheetApp.getActiveSpreadsheet();
+  const hojaUsuarios = libro.getSheetByName('Usuarios');
+  const datos = hojaUsuarios.getDataRange().getValues();
+  
+  let filaExistente = -1;
+
+  for (let i = 1; i < datos.length; i++) {
+    // Índice 5 equivale a la Columna 6 (Documento_Identidad)
+    if (datos[i][5] == documento) { 
+      filaExistente = i + 1; // Guardamos el número de fila
+      break; 
+    }
+  }
+
+  // 4. Tomar la decisión: ¿Actualizar o Insertar?
+  if (filaExistente !== -1) {
+    // 🟡 EL USUARIO YA EXISTE: Actualizamos sus datos en la misma fila
+    hojaUsuarios.getRange(filaExistente, 4).setValue(nombres);        // Col 4: Nombres
+    hojaUsuarios.getRange(filaExistente, 5).setValue(apellidos);      // Col 5: Apellidos
+    hojaUsuarios.getRange(filaExistente, 7).setValue(telefono);       // Col 7: Teléfono
+    hojaUsuarios.getRange(filaExistente, 8).setValue(email);          // Col 8: Email
+    hojaUsuarios.getRange(filaExistente, 11).setValue(descrip_cion);  // Col 11: Descripción
+    hojaUsuarios.getRange(filaExistente, 12).setValue(obj_tivo);      // Col 12: Objetivo
+    hojaUsuarios.getRange(filaExistente, 13).setValue(Franja_Horaria);// Col 13: Franja_Horaria 
+    
+    Logger.log(`🔄 Usuario con documento ${documento} actualizado en la fila ${filaExistente}`);
+
+  } else {
+    // 🟢 EL USUARIO ES NUEVO: Insertamos una fila nueva
+    try {
+      const nuevoId = insertarFila('Usuarios', [
+        null,           // 1. id_usuario (Autoincremental)
+        3,              // 2. id_rol (3 = Cliente por defecto)
+        3,              // 3. id_membresia (3 = Mensual VIP por defecto)
+        nombres,        // 4. Nombres
+        apellidos,      // 5. Apellidos
+        documento,      // 6. Documento_Identidad
+        telefono,       // 7. Telefono
+        email,          // 8. Email
+        new Date(),     // 9. fecha_registro
+        true,           // 10. estado_activo
+        descrip_cion,   // 11. descrip_cion
+        obj_tivo,       // 12. obj_tivo
+        Franja_Horaria  // 13. Franja_Horaria (Añadido para que no se pierda el dato)
+      ]);
+
+      Logger.log(`✅ Usuario guardado exitosamente con ID: ${nuevoId}`);
+    } catch (err) {
+      Logger.log(`❌ Error al insertar fila: ${err.toString()}`);
+    }
+  }
+}
+
+// ----------------------------------------------------------------
+// Función auxiliar para mapear el nombre del plan con su ID en la hoja 'Membresias_Precios'
+// ----------------------------------------------------------------
+function obtenerIdMembresiaPorNombre(nombrePlan) {
+  const libro = SpreadsheetApp.getActiveSpreadsheet();
+  const hojaMembresias = libro.getSheetByName('Membresias_Precios');
+  const datos = hojaMembresias.getDataRange().getValues();
+  
+  for (let i = 1; i < datos.length; i++) {
+    if (datos[i][1] === nombrePlan) { // Columna 1 es 'nombre_plan'
+      return datos[i][0];             // Columna 0 es 'id_membresia'
+    }
+  }
+  return 1; // Retorna 1 por defecto si no lo encuentra
+}
+
+// ----------------------------------------------------------------
+// Función para eliminar un registro buscando por su ID (Columna A)
+// ----------------------------------------------------------------
+function eliminarRegistro(nombreTabla, idBuscado) {
+  const libro = SpreadsheetApp.getActiveSpreadsheet();
+  const hoja = libro.getSheetByName(nombreTabla);
+
+  if (!hoja) {
+    throw new Error(`La hoja '${nombreTabla}' no existe en este libro de cálculo.`);
+  }
+
+  // Obtener los valores de la Columna A (donde se guardan los IDs)
+  const ids = hoja.getRange('A:A').getValues();
+
+  // Recorrer la columna buscando el ID
+  for (let i = 1; i < ids.length; i++) {
+    const idActual = ids[i][0];
+
+    if (idActual !== '' && Number(idActual) === Number(idBuscado)) {
+      const numeroFila = i + 1; // Convertir índice (base 0) a número de fila (base 1)
+      hoja.deleteRow(numeroFila);
+      Logger.log(`✅ Registro con ID ${idBuscado} eliminado de la fila ${numeroFila} en la tabla '${nombreTabla}'.`);
+      return true;
+    }
+  }
+
+  Logger.log(`⚠️ No se encontró ningún registro con ID ${idBuscado} en la tabla '${nombreTabla}'.`);
+  return false;
+}
+
+function probarEliminacion() {
+  // Ejemplo: Eliminar el usuario cuyo id_usuario es 2 en la tabla 'Usuarios'
+  eliminarRegistro('Usuarios', 1);
+}
+
+// Función para sincronizar datos viejos o atascados
+function sincronizarRespuestasAnteriores() {
+  const libro = SpreadsheetApp.getActiveSpreadsheet();
+  const hojaRespuestas = libro.getSheetByName('Respuestas de formulario');
+  
+  if (!hojaRespuestas) {
+    Logger.log('No se encontró la hoja de respuestas.');
+    return;
+  }
+  
+  const datosRespuestas = hojaRespuestas.getDataRange().getValues();
+  
+  // Empezamos en 1 para saltarnos los encabezados de las respuestas
+  for (let i = 1; i < datosRespuestas.length; i++) {
+    // Reconstruimos el objeto 'e' falso
+    const eventoSimulado = {
+      values: datosRespuestas[i] 
+    };
+    
+    // Llamamos a tu función principal por cada fila vieja
+    // Tu script se encargará de decidir si lo actualiza o lo inserta como nuevo
+    alEnviarFormulario(eventoSimulado);
+  }
+  
+  Logger.log('¡Sincronización completada!');
